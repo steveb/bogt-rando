@@ -1,0 +1,6 @@
+pbr>=1.6 # Apache-2.0
+six
+PyYAML>=3.1.0 # MIT
+cliff
+inquirer
+bogt
