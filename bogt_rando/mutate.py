@@ -34,6 +34,26 @@ TYPE_ENABLED_CONTROLS = {
 }
 
 
+NESTED_ENABLED_CONTROLS = {
+    "fx1_on_off": "fx1_fx_type",
+    "fx2_on_off": "fx2_fx_type",
+}
+
+
+REORDERABLE = {
+    0: "comp_on_off",
+    4: "eq_on_off",
+    5: "fx1_on_off",
+    6: "fx2_on_off",
+    7: "delay_on_off",
+    8: "chorus_on_off",
+    9: "reverb_on_off",
+    10: None,  # accel has no on_off control
+    11: "pedal_fx_on_off",
+    15: "od_ds_on_off",
+}
+
+
 def normalise_weights(weights):
     weights = [float(w) for w in weights]
     tot = sum(weights)
@@ -64,15 +84,76 @@ def select_type(patch, enable_control):
     new_value = random.choice(table.keys())
     patch['params'][control] = new_value
     print('  %s: %s' % (control, table[new_value]))
-    select_type(patch, control)
 
 
 def mutate_reorder(patch):
-    print('Mutate reorder')
+    fx_chain = spec.table('FX CHAIN')
+    positions = patch['params']['chainParams']['positionList']
+    fx = None
+
+    # find fx to move which is enabled
+    while True:
+        fx = random.choice(REORDERABLE.keys())
+        enabled_control = REORDERABLE[fx]
+        if not enabled_control or patch['params'][enabled_control]:
+            break
+
+    fx_name = fx_chain[fx]
+    from_pos = positions.index(fx)
+    print('  %s:' % fx_name)
+    print('    from before: %s' % fx_chain[positions[from_pos + 1]])
+
+    # attempt reorders until a valid one is found
+    while True:
+        npos = list(positions)
+        npos.remove(fx)
+        to_pos = random.randint(0, len(npos) - 1)
+        npos.insert(to_pos, fx)
+
+        # assertions for a valid pipeline
+        # 2:PREAMP A is after 17:DIV1
+        if npos.index(2) < npos.index(17):
+            break
+
+        # 13:NS1 is 2:PREAMP A plus 1
+        if npos.index(13) - 1 != npos.index(2):
+            break
+
+        # 18:MIX1_DIV2 is after 13:NS1
+        if npos.index(18) < npos.index(13):
+            break
+
+        # 3:PREAMP B is after 18:MIX1_DIV2
+        if npos.index(3) < npos.index(18):
+            break
+
+        # 14:NS2 is 3:PREAMP B plus 1
+        if npos.index(14) - 1 != npos.index(3):
+            break
+
+        # 19:MIX2 is after 14:NS2
+        if npos.index(19) < npos.index(14):
+            break
+
+        # 16:USB is last
+        if npos.index(16) + 1 != len(npos):
+            break
+
+        print('    to   before: %s' % fx_chain[positions[to_pos + 1]])
+        chain_params = {'positionList': npos}
+        for i in range(0, len(npos)):
+            k = 'position%s' % (i + 1)
+            chain_params[k] = npos[i]
+            print('%s: %s' % (k, npos[i]))
+
+        patch['params']['chainParams'] = chain_params
+        return
 
 
 def mutate_value(patch):
-    print('Mutate value')
+    # find a value to change for an enabled fx
+    # frobnicate the bizbaz
+    pass
 
 
 def mutate_assign(patch):
