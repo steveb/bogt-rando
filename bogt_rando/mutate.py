@@ -5,53 +5,31 @@ import numpy
 from bogt import spec
 
 
-ENABLE_CONTROLS = [
-    "chorus_on_off",
-    "comp_on_off",
-    "delay_on_off",
-    "eq_on_off",
-    "fx1_on_off",
-    "fx2_on_off",
-    "od_ds_on_off",
-    "pedal_fx_on_off",
-    "preamp_a_on_off",
-    "preamp_b_on_off",
-    "reverb_on_off"
+class FxInfo(object):
+
+    def __init__(self, name, control_on_off, control_type, pos_code,
+                 nested=False):
+        self.name = name
+        self.control_on_off = control_on_off
+        self.control_type = control_type
+        self.pos_code = pos_code
+        self.nested = nested
+
+
+FX_INFOS = [
+    FxInfo("COMP", "comp_on_off", "comp_type", 0),
+    FxInfo("EQ", "eq_on_off", None, 4),
+    FxInfo("FX1", "fx1_on_off", "fx1_fx_type", 5, True),
+    FxInfo("FX2", "fx2_on_off", "fx2_fx_type", 6, True),
+    FxInfo("OS/DS", "od_ds_on_off", "od_ds_type", 15),
+    FxInfo("DELAY", "delay_on_off", "delay_type", 7),
+    FxInfo("PREAMP A", "preamp_a_on_off", "preamp_a_type", None),
+    FxInfo("PREAMP B", "preamp_b_on_off", "preamp_b_type", None),
+    FxInfo("REVERB", "reverb_on_off", "reverb_type", 9),
+    FxInfo("CHORUS", "chorus_on_off", "chorus_mode", 8),
+    FxInfo("PEDAL FX", "pedal_fx_on_off", "pedal_fx_wah_type", 11),
+    FxInfo("ACCEL FX", None, None, 10)
 ]
-
-
-TYPE_ENABLED_CONTROLS = {
-    "chorus_on_off": "chorus_mode",
-    "comp_on_off": "comp_type",
-    "delay_on_off": "delay_type",
-    "fx1_on_off": "fx1_fx_type",
-    "fx2_on_off": "fx2_fx_type",
-    "od_ds_on_off": "od_ds_type",
-    "pedal_fx_on_off": "pedal_fx_wah_type",
-    "preamp_a_on_off": "preamp_a_type",
-    "preamp_b_on_off": "preamp_b_type",
-    "reverb_on_off": "reverb_type",
-}
-
-
-NESTED_ENABLED_CONTROLS = {
-    "fx1_on_off": "fx1_fx_type",
-    "fx2_on_off": "fx2_fx_type",
-}
-
-
-REORDERABLE = {
-    0: "comp_on_off",
-    4: "eq_on_off",
-    5: "fx1_on_off",
-    6: "fx2_on_off",
-    7: "delay_on_off",
-    8: "chorus_on_off",
-    9: "reverb_on_off",
-    10: None,  # accel has no on_off control
-    11: "pedal_fx_on_off",
-    15: "od_ds_on_off",
-}
 
 
 def normalise_weights(weights):
@@ -66,20 +44,23 @@ def weighted_choice(items, weights):
 
 
 def mutate_enable(patch):
-    control = random.choice(ENABLE_CONTROLS)
+    fx_with_on_off = [f for f in FX_INFOS if f.control_on_off is not None]
+
+    fx = random.choice(fx_with_on_off)
+    control = fx.control_on_off
     value = patch['params'][control]
     new_value = 0 if value else 1
     patch['params'][control] = new_value
     table = spec.table_for_parameter_key(control)
     print('  %s: %s' % (control, table[new_value]))
     if new_value:
-        select_type(patch, control)
+        select_type(patch, fx)
 
 
-def select_type(patch, enable_control):
-    if enable_control not in TYPE_ENABLED_CONTROLS:
+def select_type(patch, fx):
+    control = fx.control_type
+    if not control:
         return
-    control = TYPE_ENABLED_CONTROLS[enable_control]
     table = spec.table_for_parameter_key(control)
     new_value = random.choice(table.keys())
     patch['params'][control] = new_value
@@ -90,27 +71,33 @@ def mutate_reorder(patch):
     fx_chain = spec.table('FX CHAIN')
     positions = patch['params']['chainParams']['positionList']
     fx = None
+    fx_info_pos = [f for f in FX_INFOS if f.pos_code is not None]
 
     # find fx to move which is enabled
     while True:
-        fx = random.choice(REORDERABLE.keys())
-        enabled_control = REORDERABLE[fx]
+        fx = random.choice(fx_info_pos)
+        enabled_control = fx.control_on_off
         if not enabled_control or patch['params'][enabled_control]:
             break
 
-    fx_name = fx_chain[fx]
-    from_pos = positions.index(fx)
+    fx_name = fx_chain[fx.pos_code]
+    from_pos = positions.index(fx.pos_code)
     print('  %s:' % fx_name)
     print('    from before: %s' % fx_chain[positions[from_pos + 1]])
 
     # attempt reorders until a valid one is found
     while True:
         npos = list(positions)
-        npos.remove(fx)
+        npos.remove(fx.pos_code)
         to_pos = random.randint(0, len(npos) - 1)
-        npos.insert(to_pos, fx)
+        npos.insert(to_pos, fx.pos_code)
 
         # assertions for a valid pipeline
+
+        # don't put back in the same position
+        if from_pos == to_pos:
+            break
+
         # 2:PREAMP A is after 17:DIV1
         if npos.index(2) < npos.index(17):
             break
@@ -144,7 +131,6 @@ def mutate_reorder(patch):
         for i in range(0, len(npos)):
             k = 'position%s' % (i + 1)
             chain_params[k] = npos[i]
-            print('%s: %s' % (k, npos[i]))
 
         patch['params']['chainParams'] = chain_params
         return
@@ -152,6 +138,13 @@ def mutate_reorder(patch):
 
 def mutate_value(patch):
     # find a value to change for an enabled fx
+    # fx_chain = spec.table('FX CHAIN')
+    # while True:
+    #     fx = random.choice(REORDERABLE.keys())
+    #     enabled_control = REORDERABLE[fx]
+    #     if not enabled_control or patch['params'][enabled_control]:
+    #         break
+
     # frobnicate the bizbaz
     pass
 
