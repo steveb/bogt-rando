@@ -21,7 +21,7 @@ FX_INFOS = [
     FxInfo("EQ", "eq_on_off", None, 4),
     FxInfo("FX1", "fx1_on_off", "fx1_fx_type", 5, True),
     FxInfo("FX2", "fx2_on_off", "fx2_fx_type", 6, True),
-    FxInfo("OS/DS", "od_ds_on_off", "od_ds_type", 15),
+    FxInfo("OD/DS", "od_ds_on_off", "od_ds_type", 15),
     FxInfo("DELAY", "delay_on_off", "delay_type", 7),
     FxInfo("PREAMP A", "preamp_a_on_off", "preamp_a_type", None),
     FxInfo("PREAMP B", "preamp_b_on_off", "preamp_b_type", None),
@@ -138,19 +138,52 @@ def mutate_reorder(patch):
 
 def mutate_value(patch):
     # find a value to change for an enabled fx
-    # fx_chain = spec.table('FX CHAIN')
-    # while True:
-    #     fx = random.choice(REORDERABLE.keys())
-    #     enabled_control = REORDERABLE[fx]
-    #     if not enabled_control or patch['params'][enabled_control]:
-    #         break
+    fx = None
+    while True:
+        fx = random.choice(FX_INFOS)
+        enabled_control = fx.control_on_off
+        if not enabled_control or patch['params'][enabled_control]:
+            break
+
+    def frobbable(params):
+        for v in params:
+            if v['parameter'][0] != fx.name:
+                continue
+            if v['parameter_key'] == fx.control_on_off:
+                continue
+            if v['parameter_key'] == fx.control_type:
+                continue
+            if fx.nested:
+                table = spec.table_for_parameter_key(fx.control_type)
+                type_value = patch['params'][fx.control_type]
+                type_value_name = table[type_value]
+                nested_name = v['parameter'][1]
+                if nested_name != type_value_name:
+                    continue
+            yield v
+
+    # build a list of values which might be frobbed
+    i2b = spec.table('BYTENUM TO INDEX REVERSE')
+    b2i = spec.table('BYTENUM TO INDEX')
+    patch_params = list(frobbable(spec.patch().values()))
+
+    # choose a param to frob
+    patch_param = random.choice(patch_params)
+    param_key = patch_param['parameter_key']
+    current_value = patch['params'][param_key]
+    current_value_byte = i2b[current_value]
+    table = spec.table_for_parameter_key(param_key)
+    print('  %s:' % param_key)
+    print('    from: %s' % table[current_value_byte])
 
     # frobnicate the bizbaz
-    pass
+    new_value = random.choice(table.keys())
+    print('    to:   %s' % table[new_value])
+    patch['params'][param_key] = b2i[new_value]
 
 
 def mutate_assign(patch):
-    print('Mutate assign')
+    print('TODO Mutate assign')
 
 
 mutations = (mutate_enable, mutate_reorder, mutate_value, mutate_assign)
