@@ -54,6 +54,11 @@ class RandCmd(command.Command):
             default=fx_names,
             help=('Which effects to mutate. (Default %s)' % fx_names)
         )
+        parser.add_argument(
+            '--fx-ignore',
+            default='',
+            help=('Which effects to exclude from mutate.')
+        )
 
         return parser
 
@@ -68,6 +73,11 @@ class RandCmd(command.Command):
         self.mutations = parsed_args.mutations
         self.weights = mutate.normalise_weights(parsed_args.weights.split(','))
         fx_names = parsed_args.fx.split(',')
+        if parsed_args.fx_ignore:
+            fxi = parsed_args.fx_ignore.split(',')
+            for f in fxi:
+                if f in fx_names:
+                    fx_names.remove(f)
         self.fx = [f for f in mutate.FX_INFOS if f.name in fx_names]
         new_liveset = self.mutate_liveset()
         new_liveset.to_file(self.out)
