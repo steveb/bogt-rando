@@ -1,3 +1,4 @@
+import hashlib
 import random
 
 import numpy
@@ -32,6 +33,9 @@ FX_INFOS = [
 ]
 
 
+FX_BY_NAME = dict((f.name, f) for f in FX_INFOS)
+
+
 def normalise_weights(weights):
     weights = [float(w) for w in weights]
     tot = sum(weights)
@@ -43,8 +47,10 @@ def weighted_choice(items, weights):
     return numpy.random.choice(items, p=weights)
 
 
-def mutate_enable(patch):
-    fx_with_on_off = [f for f in FX_INFOS if f.control_on_off is not None]
+def mutate_enable(patch, fxs, info_out):
+    fx_with_on_off = [f for f in fxs if f.control_on_off is not None]
+    if not fx_with_on_off:
+        return
 
     fx = random.choice(fx_with_on_off)
     control = fx.control_on_off
@@ -52,38 +58,37 @@ def mutate_enable(patch):
     new_value = 0 if value else 1
     patch['params'][control] = new_value
     table = spec.table_for_parameter_key(control)
-    print('  %s: %s' % (control, table[new_value]))
+    info_out.write('  %s: %s\n' % (control, table[new_value]))
     if new_value:
-        select_type(patch, fx)
+        select_type(patch, fx, info_out)
 
 
-def select_type(patch, fx):
+def select_type(patch, fx, info_out):
     control = fx.control_type
     if not control:
         return
     table = spec.table_for_parameter_key(control)
     new_value = random.choice(table.keys())
     patch['params'][control] = new_value
-    print('  %s: %s' % (control, table[new_value]))
+    info_out.write('  %s: %s\n' % (control, table[new_value]))
 
 
-def mutate_reorder(patch):
+def mutate_reorder(patch, fxs, info_out):
+    # find fx to move which is enabled
+    fx_info_pos = [f for f in fxs
+                   if f.pos_code is not None
+                   and f.control_on_off
+                   and patch['params'][f.control_on_off]]
+    if not fx_info_pos:
+        return
+
+    fx = random.choice(fx_info_pos)
+
     fx_chain = spec.table('FX CHAIN')
     positions = patch['params']['chainParams']['positionList']
-    fx = None
-    fx_info_pos = [f for f in FX_INFOS if f.pos_code is not None]
-
-    # find fx to move which is enabled
-    while True:
-        fx = random.choice(fx_info_pos)
-        enabled_control = fx.control_on_off
-        if not enabled_control or patch['params'][enabled_control]:
-            break
 
     fx_name = fx_chain[fx.pos_code]
     from_pos = positions.index(fx.pos_code)
-    print('  %s:' % fx_name)
-    print('    from before: %s' % fx_chain[positions[from_pos + 1]])
 
     # attempt reorders until a valid one is found
     while True:
@@ -126,7 +131,12 @@ def mutate_reorder(patch):
         if npos.index(16) + 1 != len(npos):
             break
 
-        print('    to   before: %s' % fx_chain[positions[to_pos + 1]])
+        info_out.write('  order: [')
+        if to_pos != 0:
+            info_out.write('%s, ' % fx_chain[npos[to_pos - 1]])
+        info_out.write('*%s*, ' % fx_name)
+        info_out.write('%s]\n' % fx_chain[npos[to_pos + 1]])
+
         chain_params = {'positionList': npos}
         for i in range(0, len(npos)):
             k = 'position%s' % (i + 1)
@@ -136,14 +146,14 @@ def mutate_reorder(patch):
         return
 
 
-def mutate_value(patch):
+def mutate_value(patch, fxs, info_out):
     # find a value to change for an enabled fx
-    fx = None
-    while True:
-        fx = random.choice(FX_INFOS)
-        enabled_control = fx.control_on_off
-        if not enabled_control or patch['params'][enabled_control]:
-            break
+    enabled_fxs = [f for f in fxs
+                   if f.control_on_off
+                   and patch['params'][f.control_on_off]]
+    if not enabled_fxs:
+        return
+    fx = random.choice(fxs)
 
     def frobbable(params):
         for v in params:
@@ -163,30 +173,41 @@ def mutate_value(patch):
             yield v
 
     # build a list of values which might be frobbed
-    i2b = spec.table('BYTENUM TO INDEX REVERSE')
     b2i = spec.table('BYTENUM TO INDEX')
     patch_params = list(frobbable(spec.patch().values()))
 
     # choose a param to frob
     patch_param = random.choice(patch_params)
     param_key = patch_param['parameter_key']
-    current_value = patch['params'][param_key]
-    current_value_byte = i2b[current_value]
     table = spec.table_for_parameter_key(param_key)
-    print('  %s:' % param_key)
-    print('    from: %s' % table[current_value_byte])
 
     # frobnicate the bizbaz
     new_value = random.choice(table.keys())
-    print('    to:   %s' % table[new_value])
     patch['params'][param_key] = b2i[new_value]
+    info_out.write('  %s: %s\n' % (param_key, table[new_value]))
 
 
-def mutate_assign(patch):
-    print('TODO Mutate assign')
+def mutate_assign(patch, fxs, info_out):
+    info_out.write('TODO Mutate assign\n')
 
 
-mutations = (mutate_enable, mutate_reorder, mutate_value, mutate_assign)
+def finish_mutate(patch, info_out):
+    name = hashlib.sha224(str(
+        random.getrandbits(256))).hexdigest()[:16]
+    patch['name'] = name
+    patch['gt100Name1'] = name[:8]
+    patch['gt100Name2'] = name[8:]
+    patch['params']['patchname'] = name
+    patch['id'] = '%010d' % random.randint(1, 9999999999)
+    patch['note'] = info_out.getvalue()
+
+
+mutations = (
+    mutate_enable,
+    mutate_reorder,
+    mutate_value,
+    mutate_assign,
+)
 
 
 def select_mutations(weights, count):

@@ -1,6 +1,7 @@
 import copy
 import logging
 import os
+from StringIO import StringIO
 
 from cliff import command
 
@@ -47,6 +48,12 @@ class RandCmd(command.Command):
             help=('Relative weights for choosing mutation type. '
                   '(Default 10,20,50,20)')
         )
+        fx_names = ','.join(mutate.FX_BY_NAME.keys())
+        parser.add_argument(
+            '--fx',
+            default=fx_names,
+            help=('Which effects to mutate. (Default %s)' % fx_names)
+        )
 
         return parser
 
@@ -60,9 +67,12 @@ class RandCmd(command.Command):
         self.count = parsed_args.count
         self.mutations = parsed_args.mutations
         self.weights = mutate.normalise_weights(parsed_args.weights.split(','))
-        self.start_mutate()
+        fx_names = parsed_args.fx.split(',')
+        self.fx = [f for f in mutate.FX_INFOS if f.name in fx_names]
+        new_liveset = self.mutate_liveset()
+        new_liveset.to_file(self.out)
 
-    def start_mutate(self):
+    def mutate_liveset(self):
         count = 0
         out = tsl.empty_tsl(self.conf)
 
@@ -70,13 +80,17 @@ class RandCmd(command.Command):
             for name, patch in self.liveset.patches.items():
                 count += 1
                 if count > self.count:
-                    return
-                print('Mutating %s ' % name)
-                result = self.mutate_patch(copy.deepcopy(patch))
-                out.add_patch(result)
-        return out
+                    return out
+                result = copy.deepcopy(patch)
 
-    def mutate_patch(self, patch):
+                info_out = StringIO()
+                info_out.write('Mutating "%s"\n' % patch['name'])
+                result = self.mutate_patch(result, info_out)
+                mutate.finish_mutate(result, info_out)
+                print(info_out.getvalue())
+                out.add_patch(result)
+
+    def mutate_patch(self, patch, info_out):
         for mutation in mutate.select_mutations(self.weights, self.mutations):
-            mutation(patch)
+            mutation(patch, self.fx, info_out)
         return patch
