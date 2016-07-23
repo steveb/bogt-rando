@@ -87,8 +87,7 @@ class RandCmd(command.Command):
                 info_out.write('Mutating "%s"\n' % patch['name'])
                 ctx = mutate.MutateContext(result, self.fx, info_out)
 
-                # If specific fx are selected, just enable them and zero out
-                # the enable mutate weighting
+                # If specific fx are selected, make sure they are enabled
                 if len(self.fx) != len(mutate.FX_INFOS):
                     mutate.enable_all(ctx)
 

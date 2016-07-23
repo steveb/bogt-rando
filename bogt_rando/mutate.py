@@ -7,11 +7,11 @@ from bogt import spec
 
 class FxInfo(object):
 
-    def __init__(self, name, control_on_off, control_type, pos_code,
+    def __init__(self, name, on_off_param, type_param, pos_code,
                  nested=False):
         self.name = name
-        self.control_on_off = control_on_off
-        self.control_type = control_type
+        self.on_off_param = on_off_param
+        self.type_param = type_param
         self.pos_code = pos_code
         self.nested = nested
 
@@ -22,6 +22,8 @@ class MutateContext(object):
         self.patch = patch
         self.fxs = fxs
         self.info_out = info_out
+        # set of changed params
+        self.changed = set()
 
 
 FX_INFOS = [
@@ -58,53 +60,58 @@ def weighted_choice(items, weights):
 
 
 def mutate_enable(ctx):
-    if len(ctx.fxs) != len(FX_INFOS):
-        return
-
-    fx_with_on_off = [f for f in ctx.fxs if f.control_on_off is not None]
+    fx_with_on_off = [f for f in ctx.fxs
+                      if f.on_off_param is not None
+                      and f.on_off_param not in ctx.changed]
     if not fx_with_on_off:
         return
 
     fx = random.choice(fx_with_on_off)
-    control = fx.control_on_off
-    value = ctx.patch['params'][control]
+    param = fx.on_off_param
+    value = ctx.patch['params'][param]
     new_value = 0 if value else 1
-    ctx.patch['params'][control] = new_value
-    table = spec.table_for_parameter_key(control)
-    ctx.info_out.write('  %s: %s\n' % (control, table[new_value]))
+    ctx.patch['params'][param] = new_value
+    ctx.changed.add(param)
+    table = spec.table_for_parameter_key(param)
+    ctx.info_out.write('  %s: %s\n' % (param, table[new_value]))
     if new_value:
         select_type(ctx, fx)
 
 
 def enable_all(ctx):
-    fx_with_on_off = [f for f in ctx.fxs if f.control_on_off is not None]
+    fx_with_on_off = [f for f in ctx.fxs
+                      if f.on_off_param is not None
+                      and f.on_off_param not in ctx.changed]
     if not fx_with_on_off:
         return
 
     for fx in fx_with_on_off:
-        control = fx.control_on_off
-        ctx.patch['params'][control] = 1
-        table = spec.table_for_parameter_key(control)
-        ctx.info_out.write('  %s: %s\n' % (control, table[1]))
+        param = fx.on_off_param
+        ctx.patch['params'][param] = 1
+        ctx.changed.add(param)
+        table = spec.table_for_parameter_key(param)
+        ctx.info_out.write('  %s: %s\n' % (param, table[1]))
         select_type(ctx, fx)
 
 
 def select_type(ctx, fx):
-    control = fx.control_type
-    if not control:
+    param = fx.type_param
+    if not param or param in ctx.changed:
         return
-    table = spec.table_for_parameter_key(control)
+    table = spec.table_for_parameter_key(param)
     new_value = random.choice(table.keys())
-    ctx.patch['params'][control] = new_value
-    ctx.info_out.write('  %s: %s\n' % (control, table[new_value]))
+    ctx.patch['params'][param] = new_value
+    ctx.changed.add(param)
+
+    ctx.info_out.write('  %s: %s\n' % (param, table[new_value]))
 
 
 def mutate_reorder(ctx):
     # find fx to move which is enabled
     fx_info_pos = [f for f in ctx.fxs
                    if f.pos_code is not None
-                   and f.control_on_off
-                   and ctx.patch['params'][f.control_on_off]]
+                   and f.on_off_param
+                   and ctx.patch['params'][f.on_off_param]]
     if not fx_info_pos:
         return
 
@@ -175,8 +182,8 @@ def mutate_reorder(ctx):
 def mutate_value(ctx):
     # find a value to change for an enabled fx
     enabled_fxs = [f for f in ctx.fxs
-                   if f.control_on_off
-                   and ctx.patch['params'][f.control_on_off]]
+                   if f.on_off_param
+                   and ctx.patch['params'][f.on_off_param]]
     if not enabled_fxs:
         return
     fx = random.choice(ctx.fxs)
@@ -185,13 +192,15 @@ def mutate_value(ctx):
         for v in params:
             if v['parameter'][0] != fx.name:
                 continue
-            if v['parameter_key'] == fx.control_on_off:
+            if v['parameter_key'] == fx.on_off_param:
                 continue
-            if v['parameter_key'] == fx.control_type:
+            if v['parameter_key'] == fx.type_param:
+                continue
+            if v['parameter_key'] in ctx.changed:
                 continue
             if fx.nested:
-                table = spec.table_for_parameter_key(fx.control_type)
-                type_value = ctx.patch['params'][fx.control_type]
+                table = spec.table_for_parameter_key(fx.type_param)
+                type_value = ctx.patch['params'][fx.type_param]
                 type_value_name = table[type_value]
                 nested_name = v['parameter'][1]
                 if nested_name != type_value_name:
@@ -201,6 +210,8 @@ def mutate_value(ctx):
     # build a list of values which might be frobbed
     b2i = spec.table('BYTENUM TO INDEX')
     patch_params = list(frobbable(spec.patch().values()))
+    if not patch_params:
+        return
 
     # choose a param to frob
     patch_param = random.choice(patch_params)
@@ -210,6 +221,7 @@ def mutate_value(ctx):
     # frobnicate the bizbaz
     new_value = random.choice(table.keys())
     ctx.patch['params'][param_key] = b2i[new_value]
+    ctx.changed.add(param_key)
     ctx.info_out.write('  %s: %s\n' % (param_key, table[new_value]))
 
 
