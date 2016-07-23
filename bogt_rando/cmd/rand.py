@@ -48,7 +48,7 @@ class RandCmd(command.Command):
             help=('Relative weights for choosing mutation type. '
                   '(Default 10,20,50,20)')
         )
-        fx_names = ','.join(mutate.FX_BY_NAME.keys())
+        fx_names = ','.join(mutate.FX_NAMES)
         parser.add_argument(
             '--fx',
             default=fx_names,
@@ -85,12 +85,18 @@ class RandCmd(command.Command):
 
                 info_out = StringIO()
                 info_out.write('Mutating "%s"\n' % patch['name'])
-                result = self.mutate_patch(result, info_out)
-                mutate.finish_mutate(result, info_out)
+                ctx = mutate.MutateContext(result, self.fx, info_out)
+
+                # If specific fx are selected, just enable them and zero out
+                # the enable mutate weighting
+                if len(self.fx) != len(mutate.FX_INFOS):
+                    mutate.enable_all(ctx)
+
+                self.mutate_patch(ctx)
+                mutate.finish_mutate(ctx)
                 print(info_out.getvalue())
                 out.add_patch(result)
 
-    def mutate_patch(self, patch, info_out):
+    def mutate_patch(self, ctx):
         for mutation in mutate.select_mutations(self.weights, self.mutations):
-            mutation(patch, self.fx, info_out)
-        return patch
+            mutation(ctx)

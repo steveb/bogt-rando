@@ -1,4 +1,3 @@
-import hashlib
 import random
 
 import numpy
@@ -15,6 +14,14 @@ class FxInfo(object):
         self.control_type = control_type
         self.pos_code = pos_code
         self.nested = nested
+
+
+class MutateContext(object):
+
+    def __init__(self, patch, fxs, info_out):
+        self.patch = patch
+        self.fxs = fxs
+        self.info_out = info_out
 
 
 FX_INFOS = [
@@ -36,6 +43,9 @@ FX_INFOS = [
 FX_BY_NAME = dict((f.name, f) for f in FX_INFOS)
 
 
+FX_NAMES = FX_BY_NAME.keys()
+
+
 def normalise_weights(weights):
     weights = [float(w) for w in weights]
     tot = sum(weights)
@@ -47,45 +57,61 @@ def weighted_choice(items, weights):
     return numpy.random.choice(items, p=weights)
 
 
-def mutate_enable(patch, fxs, info_out):
-    fx_with_on_off = [f for f in fxs if f.control_on_off is not None]
+def mutate_enable(ctx):
+    if len(ctx.fxs) != len(FX_INFOS):
+        return
+
+    fx_with_on_off = [f for f in ctx.fxs if f.control_on_off is not None]
     if not fx_with_on_off:
         return
 
     fx = random.choice(fx_with_on_off)
     control = fx.control_on_off
-    value = patch['params'][control]
+    value = ctx.patch['params'][control]
     new_value = 0 if value else 1
-    patch['params'][control] = new_value
+    ctx.patch['params'][control] = new_value
     table = spec.table_for_parameter_key(control)
-    info_out.write('  %s: %s\n' % (control, table[new_value]))
+    ctx.info_out.write('  %s: %s\n' % (control, table[new_value]))
     if new_value:
-        select_type(patch, fx, info_out)
+        select_type(ctx, fx)
 
 
-def select_type(patch, fx, info_out):
+def enable_all(ctx):
+    fx_with_on_off = [f for f in ctx.fxs if f.control_on_off is not None]
+    if not fx_with_on_off:
+        return
+
+    for fx in fx_with_on_off:
+        control = fx.control_on_off
+        ctx.patch['params'][control] = 1
+        table = spec.table_for_parameter_key(control)
+        ctx.info_out.write('  %s: %s\n' % (control, table[1]))
+        select_type(ctx, fx)
+
+
+def select_type(ctx, fx):
     control = fx.control_type
     if not control:
         return
     table = spec.table_for_parameter_key(control)
     new_value = random.choice(table.keys())
-    patch['params'][control] = new_value
-    info_out.write('  %s: %s\n' % (control, table[new_value]))
+    ctx.patch['params'][control] = new_value
+    ctx.info_out.write('  %s: %s\n' % (control, table[new_value]))
 
 
-def mutate_reorder(patch, fxs, info_out):
+def mutate_reorder(ctx):
     # find fx to move which is enabled
-    fx_info_pos = [f for f in fxs
+    fx_info_pos = [f for f in ctx.fxs
                    if f.pos_code is not None
                    and f.control_on_off
-                   and patch['params'][f.control_on_off]]
+                   and ctx.patch['params'][f.control_on_off]]
     if not fx_info_pos:
         return
 
     fx = random.choice(fx_info_pos)
 
     fx_chain = spec.table('FX CHAIN')
-    positions = patch['params']['chainParams']['positionList']
+    positions = ctx.patch['params']['chainParams']['positionList']
 
     fx_name = fx_chain[fx.pos_code]
     from_pos = positions.index(fx.pos_code)
@@ -131,29 +157,29 @@ def mutate_reorder(patch, fxs, info_out):
         if npos.index(16) + 1 != len(npos):
             break
 
-        info_out.write('  order: [')
+        ctx.info_out.write('  order: [')
         if to_pos != 0:
-            info_out.write('%s, ' % fx_chain[npos[to_pos - 1]])
-        info_out.write('*%s*, ' % fx_name)
-        info_out.write('%s]\n' % fx_chain[npos[to_pos + 1]])
+            ctx.info_out.write('%s, ' % fx_chain[npos[to_pos - 1]])
+        ctx.info_out.write('*%s*, ' % fx_name)
+        ctx.info_out.write('%s]\n' % fx_chain[npos[to_pos + 1]])
 
         chain_params = {'positionList': npos}
         for i in range(0, len(npos)):
             k = 'position%s' % (i + 1)
             chain_params[k] = npos[i]
 
-        patch['params']['chainParams'] = chain_params
+        ctx.patch['params']['chainParams'] = chain_params
         return
 
 
-def mutate_value(patch, fxs, info_out):
+def mutate_value(ctx):
     # find a value to change for an enabled fx
-    enabled_fxs = [f for f in fxs
+    enabled_fxs = [f for f in ctx.fxs
                    if f.control_on_off
-                   and patch['params'][f.control_on_off]]
+                   and ctx.patch['params'][f.control_on_off]]
     if not enabled_fxs:
         return
-    fx = random.choice(fxs)
+    fx = random.choice(ctx.fxs)
 
     def frobbable(params):
         for v in params:
@@ -165,7 +191,7 @@ def mutate_value(patch, fxs, info_out):
                 continue
             if fx.nested:
                 table = spec.table_for_parameter_key(fx.control_type)
-                type_value = patch['params'][fx.control_type]
+                type_value = ctx.patch['params'][fx.control_type]
                 type_value_name = table[type_value]
                 nested_name = v['parameter'][1]
                 if nested_name != type_value_name:
@@ -183,23 +209,30 @@ def mutate_value(patch, fxs, info_out):
 
     # frobnicate the bizbaz
     new_value = random.choice(table.keys())
-    patch['params'][param_key] = b2i[new_value]
-    info_out.write('  %s: %s\n' % (param_key, table[new_value]))
+    ctx.patch['params'][param_key] = b2i[new_value]
+    ctx.info_out.write('  %s: %s\n' % (param_key, table[new_value]))
 
 
-def mutate_assign(patch, fxs, info_out):
-    info_out.write('TODO Mutate assign\n')
+def mutate_assign(ctx):
+    ctx.info_out.write('TODO Mutate assign\n')
 
 
-def finish_mutate(patch, info_out):
-    name = hashlib.sha224(str(
-        random.getrandbits(256))).hexdigest()[:16]
-    patch['name'] = name
-    patch['gt100Name1'] = name[:8]
-    patch['gt100Name2'] = name[8:]
-    patch['params']['patchname'] = name
-    patch['id'] = '%010d' % random.randint(1, 9999999999)
-    patch['note'] = info_out.getvalue()
+def finish_mutate(ctx):
+    cons = 'qwrtypsdfghjklzxcvbnm'
+    vowels = 'aeiou'
+    name = ''
+    for i in range(2):
+        for j in range(3):
+            name += random.choice(cons)
+            name += random.choice(vowels)
+        name += '  '
+    ctx.patch['name'] = name
+    ctx.patch['gt100Name1'] = name[:8]
+    ctx.patch['gt100Name2'] = name[8:]
+    ctx.patch['params']['patchname'] = name
+    ctx.patch['id'] = '%010d' % random.randint(1, 9999999999)
+    ctx.patch['note'] = ctx.info_out.getvalue()
+    ctx.info_out.write('  patchname: %s' % name)
 
 
 mutations = (
