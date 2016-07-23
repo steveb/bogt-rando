@@ -103,6 +103,7 @@ class RandCmd(command.Command):
 
                 self.mutate_patch(ctx)
                 mutate.finish_mutate(ctx)
+                out.write_patch_order(result, info_out)
                 print(info_out.getvalue())
                 out.add_patch(result)
 

@@ -244,7 +244,7 @@ def finish_mutate(ctx):
     ctx.patch['params']['patchname'] = name
     ctx.patch['id'] = '%010d' % random.randint(1, 9999999999)
     ctx.patch['note'] = ctx.info_out.getvalue()
-    ctx.info_out.write('  patchname: %s' % name)
+    ctx.info_out.write('  patchname: %s\n' % name)
 
 
 mutations = (
