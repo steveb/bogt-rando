@@ -80,11 +80,11 @@ class RandCmd(command.Command):
                     fx_names.remove(f)
         self.fx = [f for f in mutate.FX_INFOS if f.name in fx_names]
         new_liveset = self.mutate_liveset()
-        new_liveset.to_file(self.out)
+        new_liveset.store()
 
     def mutate_liveset(self):
         count = 0
-        out = tsl.empty_tsl(self.conf)
+        out = tsl.LiveSet(self.conf, path=self.out)
 
         while True:
             for name, patch in self.liveset.patches.items():
@@ -102,8 +102,8 @@ class RandCmd(command.Command):
                     mutate.enable_all(ctx)
 
                 self.mutate_patch(ctx)
+                tsl.write_patch_order(result, info_out)
                 mutate.finish_mutate(ctx)
-                out.write_patch_order(result, info_out)
                 print(info_out.getvalue())
                 out.add_patch(result)
 
